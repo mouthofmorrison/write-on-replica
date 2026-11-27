@@ -11,7 +11,7 @@
 // Every change, of either kind, goes through one history and ends by normalizing the
 // document, so groups never end up duplicated, orphaned or out of step with their text.
 
-import { htmlToBlocks, blocksToHtml } from '../doc/format.js';
+import { htmlToBlocks, blocksToHtml, orderedListNumbers } from '../doc/format.js';
 import { cloneGroups } from '../doc/model.js';
 import { History } from '../doc/history.js';
 import * as doc from '../doc/blocks.js';
@@ -21,10 +21,16 @@ import { readSelection, writeSelection, rangeFor, positionFromPoint, positionOf 
 const BACKWARD = new Set(['deleteContentBackward', 'deleteWordBackward', 'deleteSoftLineBackward', 'deleteHardLineBackward']);
 const FORWARD = new Set(['deleteContentForward', 'deleteWordForward', 'deleteSoftLineForward', 'deleteHardLineForward']);
 const REFUSED = /^(format|insertOrderedList|insertUnorderedList|insertHorizontalRule|insertLink)/;
+const PASTE_URL = /^https?:\/\/[^\s<>"]+$/i;
 
 const samePosition = (a, b) => a.block === b.block && a.offset === b.offset;
 const precedes = (a, b) => a.block < b.block || (a.block === b.block && a.offset < b.offset);
 const sameKeys = (a, b) => a.length === b.length && a.every((key, i) => key === b[i]);
+
+function keysOf(list) {
+  const nums = orderedListNumbers(list);
+  return list.map((b, i) => blockKey(b, nums[i]));
+}
 
 export function createEditor(root) {
   let blocks = [{ kind: 'blank', runs: [] }];
@@ -45,9 +51,10 @@ export function createEditor(root) {
 
   /** Makes the DOM show `next`, touching only the paragraphs that differ. */
   function render(next) {
-    const nextKeys = next.map(blockKey);
+    const nums = orderedListNumbers(next);
+    const nextKeys = next.map((b, i) => blockKey(b, nums[i]));
     if (root.children.length !== keys.length) {
-      root.replaceChildren(...next.map(createBlockElement));
+      root.replaceChildren(...next.map((b, i) => createBlockElement(b, nums[i])));
       keys = nextKeys;
       return;
     }
@@ -60,10 +67,10 @@ export function createEditor(root) {
     const removing = keys.length - head - tail;
     const adding = nextKeys.length - head - tail;
     const shared = Math.min(removing, adding);
-    for (let i = 0; i < shared; i++) updateBlockElement(root.children[head + i], next[head + i]);
+    for (let i = 0; i < shared; i++) updateBlockElement(root.children[head + i], next[head + i], nums[head + i]);
     for (let i = shared; i < removing; i++) root.children[head + shared].remove();
     const anchor = root.children[head + shared] ?? null;
-    for (let i = shared; i < adding; i++) root.insertBefore(createBlockElement(next[head + i]), anchor);
+    for (let i = shared; i < adding; i++) root.insertBefore(createBlockElement(next[head + i], nums[head + i]), anchor);
     keys = nextKeys;
   }
 
@@ -79,16 +86,13 @@ export function createEditor(root) {
    * Makes one change to the document. `fn` receives a draft { blocks, groups, overflow,
    * selection } to modify with the functions in doc/blocks.js; set `draft.selection` to
    * { start, end? } to place the selection afterward.
-   * @param record false for a change that is not the writer's edit and so not a step to
-   *   undo (the panel marking the word it is looking at); listeners are told as much
-   * @returns {boolean} whether anything changed
    */
   function change(label, fn, { coalesceKey = null, meta = null, record = true } = {}) {
     const before = snapshot();
     const draft = { blocks, groups: cloneGroups(groups), overflow, selection: null };
     fn(draft);
     const tidy = doc.normalizeBlocks(draft.blocks, draft.groups);
-    const same = draft.overflow === overflow && sameKeys(tidy.blocks.map(blockKey), keys) && JSON.stringify(tidy.groups) === JSON.stringify(groups);
+    const same = draft.overflow === overflow && sameKeys(keysOf(tidy.blocks), keys) && JSON.stringify(tidy.groups) === JSON.stringify(groups);
     if (!same) {
       if (record) history.record(before, { coalesceKey, meta: meta ?? { label } });
       blocks = tidy.blocks;
@@ -154,12 +158,13 @@ export function createEditor(root) {
     if (structureIntact) {
       next = [...blocks];
       const touched = new Set([before.selection?.start.block, before.selection?.end.block, selection?.start.block, selection?.end.block]);
+      const nums = orderedListNumbers(next);
       for (const index of touched) {
         if (!Number.isInteger(index) || index < 0 || index >= next.length) continue;
         const p = root.children[index];
         if (p.childNodes.length > 1) p.normalize();
         next[index] = readBlock(p);
-        keys[index] = isTidy(p) ? blockKey(next[index]) : null; // null: render this one again
+        keys[index] = isTidy(p) ? blockKey(next[index], nums[index]) : null; // null: render this one again
       }
     } else {
       // Something restructured the page (it should not happen). Read everything.
@@ -170,17 +175,19 @@ export function createEditor(root) {
     }
 
     const tidy = doc.normalizeBlocks(next, groups);
-    // A paragraph that just became a heading lost its marker; move the caret back by as much.
+    // A paragraph that just promoted to heading/list/quote lost its prefix; shift caret back by as much.
     if (selection) {
       for (const end of selection.collapsed ? [selection.start] : [selection.start, selection.end]) {
         const was = next[end.block];
         const now = tidy.blocks[end.block];
-        if (was && now && was.kind !== 'h' && now.kind === 'h') end.offset = Math.max(0, end.offset - (doc.lengthOf(was) - doc.lengthOf(now)));
+        if (was && now && was.kind === 'p' && now.kind !== 'p' && now.kind !== 'blank') {
+          end.offset = Math.max(0, end.offset - (doc.lengthOf(was) - doc.lengthOf(now)));
+        }
       }
     }
-    const nextKeys = tidy.blocks.map(blockKey);
+    const nextKeys = keysOf(tidy.blocks);
     const rerender = !sameKeys(nextKeys, keys); // the DOM does not yet show the tidied document
-    const changed = !sameKeys(nextKeys, before.blocks.map(blockKey)) || JSON.stringify(tidy.groups) !== JSON.stringify(before.groups);
+    const changed = !sameKeys(nextKeys, keysOf(before.blocks)) || JSON.stringify(tidy.groups) !== JSON.stringify(before.groups);
 
     blocks = tidy.blocks;
     groups = tidy.groups;
@@ -203,14 +210,11 @@ export function createEditor(root) {
   }
 
   function onBeforeInput(event) {
-    // WebKit sends typing to wherever the selection is, and the selection can still be in
-    // the text when the keyboard has been given to something else (the source view, over
-    // the page). Nothing is typed into the page unless the page has the keyboard.
     if (document.activeElement !== root) {
       event.preventDefault();
       return;
     }
-    if (composing || event.isComposing) return; // an input method owns the text until it commits
+    if (composing || event.isComposing) return;
     const type = event.inputType;
     if (type === 'historyUndo' || type === 'historyRedo') {
       event.preventDefault();
@@ -285,6 +289,58 @@ export function createEditor(root) {
     }
   }
 
+  function onKeyDown(event) {
+    if (composing || event.isComposing) return;
+    const selection = readSelection(root);
+    if (!selection) return;
+
+    // Tab / Shift+Tab indents or outdents list items, or inserts two spaces in a code block.
+    if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const first = blocks[selection.start.block];
+      if (first?.kind === 'ul' || first?.kind === 'ol') {
+        event.preventDefault();
+        const delta = event.shiftKey ? -1 : 1;
+        const indented = doc.indentList(blocks, selection.start.block, selection.end.block, delta);
+        if (indented) {
+          change('indent', (draft) => {
+            draft.blocks = indented;
+            draft.selection = { start: selection.start, end: selection.end };
+          });
+        }
+        return;
+      }
+      if (first?.kind === 'codeblock' && !event.shiftKey) {
+        event.preventDefault();
+        replace(selection, '  ', 'type');
+        return;
+      }
+    }
+
+    // Cmd+Enter inside a code block exits to a new paragraph below.
+    if (event.key === 'Enter' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+      const block = blocks[selection.end.block];
+      if (block?.kind === 'codeblock') {
+        event.preventDefault();
+        step('exit-code', doc.exitCodeBlock(blocks, selection.end.block));
+        return;
+      }
+    }
+
+    // ArrowDown at the very end of a code block's trailing blank line exits below.
+    if (event.key === 'ArrowDown' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && selection.collapsed) {
+      const block = blocks[selection.start.block];
+      if (block?.kind === 'codeblock') {
+        const text = doc.textOf(block);
+        if (selection.start.offset === text.length && (text === '' || text.endsWith('\n'))) {
+          if (selection.start.block === blocks.length - 1) {
+            event.preventDefault();
+            step('exit-code', doc.exitCodeBlock(blocks, selection.start.block));
+          }
+        }
+      }
+    }
+  }
+
   // --- clipboard and drag ------------------------------------------------------------------
 
   function onCopy(event) {
@@ -299,7 +355,23 @@ export function createEditor(root) {
     event.preventDefault();
     const selection = readSelection(root);
     const text = event.clipboardData?.getData('text/plain') ?? '';
-    if (selection && text) replace(selection, text, null);
+    if (!selection || !text) return;
+
+    // Pasting a URL over highlighted text turns that selection into a hyperlink.
+    const trimmed = text.trim();
+    if (!selection.collapsed && PASTE_URL.test(trimmed)) {
+      const inCode =
+        selection.start.block === selection.end.block && blocks[selection.start.block]?.kind === 'codeblock';
+      if (!inCode) {
+        change('link', (draft) => {
+          draft.blocks = doc.setLink(draft.blocks, selection.start, selection.end, trimmed);
+          draft.selection = { start: selection.start, end: selection.end };
+        });
+        return;
+      }
+    }
+
+    replace(selection, text, null);
   }
 
   function onDrop(event) {
@@ -310,11 +382,10 @@ export function createEditor(root) {
     dragged = null;
     if (!text || !at) return;
     const inside = (range, pos) => !precedes(pos, range.start) && !precedes(range.end, pos);
-    if (source && (inside(source, at) || samePosition(at, source.end))) return; // dropped on itself
+    if (source && (inside(source, at) || samePosition(at, source.end))) return;
     change('drop', (draft) => {
       let target = at;
       if (source) {
-        // Moving text within the page: take it out first, and shift the target if it sat after it.
         const cut = doc.deleteRange(draft.blocks, source.start, source.end);
         draft.blocks = cut.blocks;
         if (precedes(source.end, at) || samePosition(source.end, at)) {
@@ -342,11 +413,6 @@ export function createEditor(root) {
     if (state.selection) select(state.selection.start, state.selection.end);
   }
 
-  /**
-   * Makes a step to undo out of something that is not a change to the document: the
-   * panel opening an empty row in its list. `meta` says what; whoever it belongs to hears
-   * of it in `history` and says so by setting `claim.taken`.
-   */
   function mark(meta) {
     history.record(snapshot(), { meta: { ...meta, mark: true } });
   }
@@ -357,10 +423,8 @@ export function createEditor(root) {
       const entry = direction === 'undo' ? history.undo(snapshot()) : history.redo(snapshot());
       if (!entry) return moved;
       moved = true;
-      emit('travel', { direction, meta: entry.meta }); // the page still shows what is about to change
+      emit('travel', { direction, meta: entry.meta });
       restore(entry.state);
-      // A step that was only the interface's has to be taken by what made it. If that is
-      // no longer there, the step means nothing now, and this press goes on to the next.
       const claim = { taken: !entry.meta?.mark };
       emit('history', { direction, meta: entry.meta, claim });
       emit('change', { label: direction });
@@ -373,6 +437,7 @@ export function createEditor(root) {
   // --- wiring -------------------------------------------------------------------------------
 
   root.addEventListener('beforeinput', onBeforeInput);
+  root.addEventListener('keydown', onKeyDown);
   root.addEventListener('input', () => {
     if (!composing) syncFromDom();
   });
@@ -418,10 +483,8 @@ export function createEditor(root) {
       return history.canRedo;
     },
 
-    /** The document as it is saved. */
     getState: () => ({ html: blocksToHtml(blocks), groups: cloneGroups(groups), overflow }),
 
-    /** Loads a document, discarding the current one and its history. */
     setState(state, { caret } = {}) {
       const tidy = doc.normalizeBlocks(htmlToBlocks(state.html ?? ''), state.groups ?? {});
       blocks = tidy.blocks;
@@ -439,9 +502,7 @@ export function createEditor(root) {
     undo,
     redo,
     mark,
-    /** Forgets the latest step if `match(meta)` says it is the one meant (see History.dropLast). */
     forget: (match) => history.dropLast(match),
-    /** Forgets every mark that `match(meta)` picks out (see History.dropAll). */
     unmark: (match) => history.dropAll((meta) => Boolean(meta?.mark) && match(meta)),
 
     selection: () => readSelection(root),

@@ -305,12 +305,11 @@ final class DocumentWindowController: NSObject, NSWindowDelegate, WKNavigationDe
             guard self.pasteboard.setString(text, forType: .string) else { throw Bridge.Failure("the text could not be copied") }
             return nil
         })
-        // The one page the document sends anyone to is X's compose window, so that is the
-        // one page the shell will open, whatever it is asked for.
+        // Open web or mailto links in the default browser (rejecting file:, javascript:, etc.).
         bridge.on("browser.open", sync: { [weak self] params in
             guard let self, let text = params["url"] as? String, let url = URL(string: text),
-                  url.scheme == "https", url.host == "x.com", url.path == "/intent/post"
-            else { throw Bridge.Failure("only X's compose window can be opened") }
+                  let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme)
+            else { throw Bridge.Failure("only http, https, or mailto links can be opened") }
             guard self.sendToBrowser(url) else { throw Bridge.Failure("the browser could not be opened") }
             return nil
         })

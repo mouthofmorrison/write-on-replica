@@ -25,10 +25,10 @@ export function createContextMenu({ editor, ui, alternatives, commands }) {
     const what = ranged ? ' for selection' : target ? ` for “${target.text}”` : '';
     const ghost = ghostPlan(editor.blocks, selection);
     return [
-      { command: 'alternatives', label: `Alternatives${what}`, keys: 'Ctrl+Shift+A', enabled: Boolean(target) },
-      { command: 'ai-alternatives', label: `AI alternatives${what}`, keys: 'Ctrl+Shift+G', enabled: Boolean(target) },
-      { command: 'ghost', label: ghost?.revive ? 'Revive it' : 'Ghost it', keys: 'Ctrl+/', enabled: Boolean(ghost) },
-      { command: 'stash', label: 'Stash this in Overflow', keys: 'Ctrl+Shift+X', enabled: commands.can('stash') },
+      { command: 'alternatives', label: `Alternatives${what}`, keys: '⌘⇧A', enabled: Boolean(target) },
+      { command: 'ai-alternatives', label: `AI alternatives${what}`, keys: '⌘⇧G', enabled: Boolean(target) },
+      { command: 'ghost', label: ghost?.revive ? 'Revive it' : 'Ghost it', keys: '⌘/', enabled: Boolean(ghost) },
+      { command: 'stash', label: 'Stash this in Overflow', keys: '⌘⇧E', enabled: commands.can('stash') },
     ];
   }
 

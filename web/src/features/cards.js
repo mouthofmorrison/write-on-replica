@@ -12,7 +12,7 @@ const el = (tag, className, text) => {
 
 function shortcutsCard() {
   const list = el('div', 'list');
-  for (const { keys, label } of [...SHORTCUTS, { keys: 'Ctrl+Return', label: 'In Overflow: use it in the page' }]) {
+  for (const { keys, label } of [...SHORTCUTS, { keys: '⌘↵', label: 'In Overflow: use it in the page' }]) {
     const row = el('div', 'shortcut');
     row.append(el('span', 'label', label), el('span', 'keys', keys));
     list.append(row);

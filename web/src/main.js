@@ -15,7 +15,7 @@ import { initGhost } from './features/ghost.js';
 import { createOverflow } from './features/overflow.js';
 import { createSourceView } from './features/sourceview.js';
 import { createLab } from './features/lab.js';
-import { initSharing } from './features/share.js';
+import { createFormatBar } from './features/formatbar.js';
 import { initReach } from './features/reach.js';
 import { createFiles } from './features/files.js';
 import { createAIClient } from './ai/client.js';
@@ -62,7 +62,7 @@ const lab = createLab({ editor, ui, ai, commands, cards });
 initReadMode({ editor, ui, commands });
 const tooltips = initTooltips();
 initReach({ editor });
-initSharing({ editor, ui, commands, native, tooltips, sound, explosions, trimmed });
+const formatbar = createFormatBar({ editor, ui, commands, native });
 const files = createFiles({ editor, ui, commands, native, tooltips });
 const shortcuts = initShortcuts({ ui, commands });
 // The menu bar's items run the same commands as the keys.
@@ -77,7 +77,7 @@ commands.register('shortcuts', () => cards.toggle('shortcuts'));
 document.getElementById('open-shortcuts').addEventListener('click', () => commands.run('shortcuts'));
 
 // One handle on the running app, for the console and for UI scenarios.
-window.writeOn = { editor, ui, native, commands, ai, decor, sound, explosions, alternatives, panel, menu, cards, overflow, source, lab, tooltips, files };
+window.writeOn = { editor, ui, native, commands, ai, decor, sound, explosions, alternatives, panel, menu, cards, overflow, source, lab, tooltips, files, formatbar };
 
 // Everything is listening: now the document.
 files.show(start);

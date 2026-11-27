@@ -88,7 +88,7 @@ test('html written by a browser parses too', () => {
   // innerHTML writes boolean attributes with ="" and may add other attributes.
   const blocks = htmlToBlocks('<p class="x">Hi <span data-ghost="">there</span>&nbsp;you <b>bold</b></p><p></p>');
   assert.deepEqual(blocks, [
-    { kind: 'p', runs: [{ text: 'Hi ' }, { text: 'there', ghost: true }, { text: ' you bold' }] },
+    { kind: 'p', runs: [{ text: 'Hi ' }, { text: 'there', ghost: true }, { text: '\u00a0you ' }, { text: 'bold', bold: true }] },
     { kind: 'blank', runs: [] },
   ]);
 });

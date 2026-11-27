@@ -51,7 +51,7 @@ export function resolveTarget(blocks, groups, selection, scope = null) {
   if (!selection || selection.start.block !== selection.end.block) return null;
   const index = selection.start.block;
   const block = blocks[index];
-  if (!block || block.runs.length === 0) return null;
+  if (!block || block.kind === 'codeblock' || block.runs.length === 0) return null;
   const text = textOf(block);
 
   const existing = (vid) => {

@@ -23,6 +23,7 @@ struct MainMenu {
         main.addItem(submenu(appMenu()))
         main.addItem(submenu(fileMenu()))
         main.addItem(submenu(editMenu()))
+        main.addItem(submenu(formatMenu()))
         main.addItem(submenu(viewMenu()))
         main.addItem(submenu(toolsMenu()))
         let window = windowMenu()
@@ -67,8 +68,6 @@ struct MainMenu {
         menu.addItem(item("Close", #selector(NSWindow.performClose(_:)), "w"))
         menu.addItem(forDocument(item("Save…", #selector(AppDelegate.saveDocument(_:)), "s")))
         menu.addItem(forDocument(item("Save As…", #selector(AppDelegate.saveDocumentAs(_:)), "s", [.command, .shift])))
-        menu.addItem(.separator())
-        menu.addItem(command("Post to X", "post", "p", [.control, .shift]))
         return menu
     }
 
@@ -110,13 +109,29 @@ struct MainMenu {
         return menu
     }
 
+    private func formatMenu() -> NSMenu {
+        let menu = NSMenu(title: "Format")
+        menu.addItem(command("Bold", "bold", "b", [.command]))
+        menu.addItem(command("Italic", "italic", "i", [.command]))
+        menu.addItem(command("Strikethrough", "strikethrough", "x", [.command, .shift]))
+        menu.addItem(command("Inline Code", "code", "c", [.command, .shift]))
+        menu.addItem(command("Link…", "link", "k", [.command]))
+        menu.addItem(.separator())
+        menu.addItem(command("Block Quote", "blockquote", "9", [.command, .shift]))
+        menu.addItem(command("Code Block", "codeblock", "c", [.command, .option, .shift]))
+        menu.addItem(.separator())
+        menu.addItem(command("Bullet List", "ul"))
+        menu.addItem(command("Numbered List", "ol"))
+        return menu
+    }
+
     private func viewMenu() -> NSMenu {
         let menu = NSMenu(title: "View")
-        menu.addItem(command("Read Mode", "read", "r", [.control, .shift]))
+        menu.addItem(command("Read Mode", "read", "r", [.command, .shift]))
         menu.addItem(command("Alternates", "alternates"))
         menu.addItem(.separator())
-        menu.addItem(command("Overflow", "overflow", "d", [.control, .shift]))
-        menu.addItem(command("Source", "source", "u", [.control]))
+        menu.addItem(command("Overflow", "overflow", "d", [.command, .shift]))
+        menu.addItem(command("Source", "source", "u", [.command]))
         menu.addItem(.separator())
         menu.addItem(item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]))
         return menu
@@ -124,11 +139,11 @@ struct MainMenu {
 
     private func toolsMenu() -> NSMenu {
         let menu = NSMenu(title: "Tools")
-        menu.addItem(command("Alternatives", "alternatives", "a", [.control, .shift]))
-        menu.addItem(command("AI Alternatives", "ai-alternatives", "g", [.control, .shift]))
+        menu.addItem(command("Alternatives", "alternatives", "a", [.command, .shift]))
+        menu.addItem(command("AI Alternatives", "ai-alternatives", "g", [.command, .shift]))
         menu.addItem(.separator())
-        menu.addItem(command("Ghost or Revive", "ghost", "/", [.control]))
-        menu.addItem(command("Stash in Overflow", "stash", "x", [.control, .shift]))
+        menu.addItem(command("Ghost or Revive", "ghost", "/", [.command]))
+        menu.addItem(command("Stash in Overflow", "stash", "e", [.command, .shift]))
         menu.addItem(.separator())
         menu.addItem(command("The Lab", "lab"))
         return menu

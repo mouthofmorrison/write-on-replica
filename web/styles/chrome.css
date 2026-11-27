@@ -110,15 +110,91 @@ body.is-read .chrome {
   left: 55px;
   bottom: 22px;
 }
-#post-x {
-  left: 91px;
-  bottom: 22px;
+
+/* --- floating formatting toolbar & link popover ----------------------------------------- */
+
+#formatbar,
+#linkpop {
+  position: fixed;
+  z-index: 35;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--popover);
+  border: 1px solid var(--popover-edge);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
-/* This one runs from the pointer (features/share.js). Its middle is --x from the left of the
-   window and --up from the bottom, wherever it has run to, and never out of the window. */
-#linkedin {
-  left: clamp(8px, calc(var(--x, 136px) - 10px), calc(100vw - 28px));
-  bottom: clamp(8px, calc(var(--up, 32px) - 10px), calc(100vh - 28px));
+#formatbar.is-open,
+#linkpop.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+#formatbar button {
+  border: 0;
+  background: transparent;
+  color: var(--lit-icon);
+  font: 500 12px/1 var(--mono);
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+#formatbar button:hover {
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text);
+}
+#formatbar button.is-active {
+  background: rgba(var(--accent-rgb), 0.28);
+  color: var(--text);
+}
+#formatbar .sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--popover-edge);
+}
+
+#linkpop form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#linkpop input {
+  width: 240px;
+  padding: 5px 8px;
+  border: 1px solid var(--popover-edge);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font: 400 12px/18px var(--mono);
+  outline: none;
+}
+#linkpop input:focus {
+  border-color: var(--accent);
+}
+#linkpop button {
+  border: 1px solid var(--popover-edge);
+  background: var(--panel);
+  color: var(--text);
+  font: 500 11px/1 var(--mono);
+  padding: 6px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+#linkpop button:hover {
+  border-color: var(--accent);
+}
+#linkpop button.link-apply {
+  background: rgba(var(--accent-rgb), 0.28);
+  border-color: rgba(var(--accent-rgb), 0.55);
 }
 
 /* --- the Lab button --------------------------------------------------------------------- */

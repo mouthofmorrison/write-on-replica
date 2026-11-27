@@ -116,7 +116,7 @@ export function createOverflow({ editor, ui, commands }) {
   }
 
   field.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || !event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (event.key !== 'Enter' || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
     event.preventDefault();
     use(field.selectionStart, field.selectionEnd, caret);
   });

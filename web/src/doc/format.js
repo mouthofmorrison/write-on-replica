@@ -14,8 +14,9 @@
 //   <!-- write_on {"version":1,"html":"<p># …</p>","groups":{…}} -->
 //
 // `html` is the editor's own record: one <p> per block, <p><br></p> for a blank line,
-// headings as "<p># …</p>", inline groups as <span data-vid="id">, paragraph groups as
-// <p data-vid="id">, ghost runs as <span data-ghost>.
+// headings as "<p># …</p>", rich blocks via data-ul/data-ol/data-quote/data-code,
+// inline groups as <span data-vid="id">, paragraph groups as <p data-vid="id">,
+// ghost runs as <span data-ghost>, and inline marks as <strong>, <em>, <s>, <code>, <a>.
 //
 // In memory a document is a DocState: { html, groups, overflow }.
 
@@ -29,10 +30,17 @@ const META_CLOSE = ' -->';
 
 // --- html <-> blocks --------------------------------------------------------------------
 //
-// A block is { kind: 'p' | 'h' | 'blank', level?, vid?, runs: [{ text, vid?, ghost? }] }.
-// Runs are flat; nesting of ghost and group spans is rebuilt when writing.
+// A block is:
+//   { kind: 'blank', runs: [] }
+//   { kind: 'p' | 'blockquote', vid?, runs }
+//   { kind: 'h', level: 1..6, vid?, runs }
+//   { kind: 'ul' | 'ol', indent: 0..2, vid?, runs }
+//   { kind: 'codeblock', lang?: string, runs }
+//
+// A run is { text, vid?, ghost?, bold?, italic?, strike?, code?, link? }.
+// Runs are flat; nesting of ghost, group, and inline mark tags is rebuilt when writing.
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
 
 function decodeEntities(text) {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
@@ -51,7 +59,16 @@ function escapeAttribute(value) {
 }
 
 function escapeText(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\u00a0/g, '&nbsp;');
+}
+
+export function safeHref(url) {
+  if (typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  if (/^(https?:|mailto:)/i.test(trimmed)) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null; // block javascript:, data:, file:, etc.
+  return trimmed;
 }
 
 function attributes(source) {
@@ -62,23 +79,63 @@ function attributes(source) {
 }
 
 function sameMarks(a, b) {
-  return a.vid === b.vid && Boolean(a.ghost) === Boolean(b.ghost);
+  return (
+    a.vid === b.vid &&
+    Boolean(a.ghost) === Boolean(b.ghost) &&
+    Boolean(a.bold) === Boolean(b.bold) &&
+    Boolean(a.italic) === Boolean(b.italic) &&
+    Boolean(a.strike) === Boolean(b.strike) &&
+    Boolean(a.code) === Boolean(b.code) &&
+    (a.link ?? null) === (b.link ?? null)
+  );
 }
 
-function makeRun(text, vid, ghost) {
+function makeRun(text, marks = {}) {
   const run = { text };
-  if (vid) run.vid = vid;
-  if (ghost) run.ghost = true;
+  if (marks.vid) run.vid = marks.vid;
+  if (marks.ghost) run.ghost = true;
+  if (marks.bold) run.bold = true;
+  if (marks.italic) run.italic = true;
+  if (marks.strike) run.strike = true;
+  if (marks.code) run.code = true;
+  if (marks.link) run.link = marks.link;
   return run;
 }
 
-function finishBlock(vid, runs) {
+function clampIndent(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.min(2, Math.floor(n))) : 0;
+}
+
+function finishBlock(meta, runs) {
   const merged = [];
   for (const run of runs) {
     if (!run.text) continue;
     const last = merged[merged.length - 1];
     if (last && sameMarks(last, run)) last.text += run.text;
     else merged.push({ ...run });
+  }
+  const { vid, kind, level, indent, lang } = meta;
+  if (kind === 'codeblock') {
+    const plain = merged.map((r) => r.text).join('');
+    const block = { kind: 'codeblock', runs: plain ? [{ text: plain }] : [] };
+    if (lang) block.lang = lang;
+    return block;
+  }
+  if (kind === 'ul' || kind === 'ol') {
+    const block = { kind, indent: indent ?? 0, runs: merged };
+    if (vid && merged.length) block.vid = vid;
+    return block;
+  }
+  if (kind === 'blockquote') {
+    const block = { kind: 'blockquote', runs: merged };
+    if (vid && merged.length) block.vid = vid;
+    return block;
+  }
+  if (kind === 'h') {
+    const block = { kind: 'h', level, runs: merged };
+    if (vid && merged.length) block.vid = vid;
+    return block;
   }
   if (merged.length === 0) return { kind: 'blank', runs: [] };
 
@@ -104,9 +161,9 @@ function finishBlock(vid, runs) {
 export function htmlToBlocks(html, unread = null) {
   const blocks = [];
   let open = false;
-  let blockVid;
+  let blockMeta = {};
   let runs = [];
-  let spans = [];
+  let stack = [];
   const idOf = (attrs) => {
     const value = attrs['data-vid'];
     if (!value) return undefined;
@@ -116,11 +173,27 @@ export function htmlToBlocks(html, unread = null) {
   };
 
   const close = () => {
-    blocks.push(finishBlock(blockVid, runs));
+    blocks.push(finishBlock(blockMeta, runs));
     open = false;
-    blockVid = undefined;
+    blockMeta = {};
     runs = [];
-    spans = [];
+    stack = [];
+  };
+
+  const activeMarks = () => {
+    const marks = {};
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (!marks.vid && stack[i].vid) marks.vid = stack[i].vid;
+      if (!marks.link && stack[i].link) marks.link = stack[i].link;
+    }
+    for (const s of stack) {
+      if (s.ghost) marks.ghost = true;
+      if (s.bold) marks.bold = true;
+      if (s.italic) marks.italic = true;
+      if (s.strike) marks.strike = true;
+      if (s.code) marks.code = true;
+    }
+    return marks;
   };
 
   const token = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>|([^<]+)|(<)/g;
@@ -132,23 +205,72 @@ export function htmlToBlocks(html, unread = null) {
         if (!value.trim()) continue; // whitespace between blocks
         open = true;
       }
-      const vid = [...spans].reverse().find((s) => s.vid)?.vid;
-      const ghost = spans.some((s) => s.ghost);
-      runs.push(makeRun(value.replace(/[\r\n]+/g, ' '), vid, ghost));
+      if (blockMeta.kind === 'codeblock') {
+        runs.push({ text: value.replace(/\r\n?/g, '\n') });
+      } else {
+        runs.push(makeRun(value.replace(/[\r\n]+/g, ' '), activeMarks()));
+      }
       continue;
     }
     const tag = rawTag.toLowerCase();
-    if (tag === 'p' || tag === 'div' || /^h[1-6]$/.test(tag)) {
+    if (tag === 'p' || tag === 'div' || /^h[1-6]$/.test(tag) || tag === 'pre') {
       if (open) close();
       if (!closing) {
         open = true;
-        blockVid = idOf(attributes(rawAttrs));
+        const attrs = attributes(rawAttrs);
+        const vid = idOf(attrs);
+        if (tag === 'pre' || 'data-code' in attrs) {
+          blockMeta = { kind: 'codeblock', lang: attrs['data-lang'] || undefined };
+        } else if ('data-ul' in attrs) {
+          blockMeta = { kind: 'ul', indent: clampIndent(attrs['data-ul']), vid };
+        } else if ('data-ol' in attrs) {
+          blockMeta = { kind: 'ol', indent: clampIndent(attrs['data-ol']), vid };
+        } else if ('data-quote' in attrs) {
+          blockMeta = { kind: 'blockquote', vid };
+        } else if ('data-h' in attrs) {
+          const lvl = Number(attrs['data-h']);
+          blockMeta = lvl >= 1 && lvl <= 6 ? { kind: 'h', level: lvl, vid } : { vid };
+        } else {
+          blockMeta = { vid };
+        }
       }
     } else if (tag === 'span') {
-      if (closing) spans.pop();
+      if (closing) stack.pop();
       else {
         const attrs = attributes(rawAttrs);
-        spans.push({ vid: idOf(attrs), ghost: 'data-ghost' in attrs });
+        stack.push({ vid: idOf(attrs), ghost: 'data-ghost' in attrs });
+        open = true;
+      }
+    } else if (tag === 'strong' || tag === 'b') {
+      if (closing) stack.pop();
+      else {
+        stack.push({ bold: true });
+        open = true;
+      }
+    } else if (tag === 'em' || tag === 'i') {
+      if (closing) stack.pop();
+      else {
+        stack.push({ italic: true });
+        open = true;
+      }
+    } else if (tag === 's' || tag === 'del') {
+      if (closing) stack.pop();
+      else {
+        stack.push({ strike: true });
+        open = true;
+      }
+    } else if (tag === 'code') {
+      if (closing) stack.pop();
+      else {
+        stack.push({ code: true });
+        open = true;
+      }
+    } else if (tag === 'a') {
+      if (closing) stack.pop();
+      else {
+        const attrs = attributes(rawAttrs);
+        const link = safeHref(attrs.href);
+        stack.push(link ? { link } : {});
         open = true;
       }
     }
@@ -158,7 +280,17 @@ export function htmlToBlocks(html, unread = null) {
   return blocks;
 }
 
-/** The inline html for a block's runs, with ghost and group spans nested canonically. */
+function wrapInlineHtml(run) {
+  let inner = escapeText(run.text);
+  if (run.code) inner = `<code>${inner}</code>`;
+  if (run.strike) inner = `<s>${inner}</s>`;
+  if (run.italic) inner = `<em>${inner}</em>`;
+  if (run.bold) inner = `<strong>${inner}</strong>`;
+  if (run.link) inner = `<a href="${escapeAttribute(run.link)}">${inner}</a>`;
+  return inner;
+}
+
+/** The inline html for a block's runs, with ghost, group, and inline mark tags nested canonically. */
 export function runsToHtml(runs) {
   // Consecutive runs of one group form a unit; other runs stand alone.
   const units = [];
@@ -178,11 +310,12 @@ export function runsToHtml(runs) {
       inGhost = ghost;
     }
     if (!unit.vid) {
-      html += escapeText(unit.runs[0].text);
+      html += wrapInlineHtml(unit.runs[0]);
     } else {
       html += `<span data-vid="${escapeAttribute(unit.vid)}">`;
       for (const run of unit.runs) {
-        html += run.ghost && !ghost ? `<span data-ghost>${escapeText(run.text)}</span>` : escapeText(run.text);
+        const inner = wrapInlineHtml(run);
+        html += run.ghost && !ghost ? `<span data-ghost>${inner}</span>` : inner;
       }
       html += '</span>';
     }
@@ -194,6 +327,20 @@ export function runsToHtml(runs) {
 function blockToHtml(block) {
   const attr = block.vid ? ` data-vid="${escapeAttribute(block.vid)}"` : '';
   if (block.kind === 'blank') return `<p${attr}><br></p>`;
+  if (block.kind === 'codeblock') {
+    const lang = block.lang ? ` data-lang="${escapeAttribute(block.lang)}"` : '';
+    const text = block.runs.map((r) => r.text).join('');
+    return `<p data-code${lang}>${text ? escapeText(text) : '<br>'}</p>`;
+  }
+  if (block.kind === 'ul') {
+    return `<p data-ul="${block.indent ?? 0}"${attr}>${block.runs.length ? runsToHtml(block.runs) : '<br>'}</p>`;
+  }
+  if (block.kind === 'ol') {
+    return `<p data-ol="${block.indent ?? 0}"${attr}>${block.runs.length ? runsToHtml(block.runs) : '<br>'}</p>`;
+  }
+  if (block.kind === 'blockquote') {
+    return `<p data-quote${attr}>${block.runs.length ? runsToHtml(block.runs) : '<br>'}</p>`;
+  }
   const marker = block.kind === 'h' ? `${'#'.repeat(block.level)} ` : '';
   return `<p${attr}>${marker}${runsToHtml(block.runs)}</p>`;
 }
@@ -210,8 +357,47 @@ const OPENS = /(^|[.!?…]["'”’)\]]*)$/;
 const capitalized = (text) =>
   text.replace(/^(\s*["'“‘(\[]*)(\p{Ll})(\p{L}*)/u, (all, lead, first, rest) => (/\p{Lu}/u.test(rest) ? all : lead + first.toUpperCase() + rest));
 
-function blockText(block, { withoutGhost = false } = {}) {
-  if (!withoutGhost) return block.runs.map((r) => r.text).join('');
+function formatRunMarkdown(text, run) {
+  if (!text) return '';
+  let out = text;
+  if (run.code) {
+    if (out.includes('`')) {
+      const pad = out.startsWith('`') || out.endsWith('`') ? ' ' : '';
+      out = '``' + pad + out + pad + '``';
+    } else {
+      out = '`' + out + '`';
+    }
+  }
+  if (run.link) out = `[${out}](${run.link})`;
+  if (run.strike) out = `~~${out}~~`;
+  if (run.italic) out = `*${out}*`;
+  if (run.bold) out = `**${out}**`;
+  return out;
+}
+
+function blockText(block, { withoutGhost = false, markdown = false } = {}) {
+  const format = (text, run) => (markdown ? formatRunMarkdown(text, run) : text);
+  if (!withoutGhost) {
+    if (!markdown) return block.runs.map((r) => r.text).join('');
+    // Coalesce runs that differ only by vid so `**foo**` isn't split into `**fo****o**`.
+    const grouped = [];
+    for (const r of block.runs) {
+      const last = grouped[grouped.length - 1];
+      if (
+        last &&
+        Boolean(last.bold) === Boolean(r.bold) &&
+        Boolean(last.italic) === Boolean(r.italic) &&
+        Boolean(last.strike) === Boolean(r.strike) &&
+        Boolean(last.code) === Boolean(r.code) &&
+        (last.link ?? null) === (r.link ?? null)
+      ) {
+        last.text += r.text;
+      } else {
+        grouped.push({ ...r });
+      }
+    }
+    return grouped.map((r) => format(r.text, r)).join('');
+  }
   let text = '';
   let dropped = false;
   let spaced = false; // whether what was dropped had a space at either end of it
@@ -234,30 +420,312 @@ function blockText(block, { withoutGhost = false } = {}) {
       dropped = false;
       spaced = false;
     }
-    text += next;
+    text += format(next, run);
   }
   return text.trim();
 }
 
-function blockToLine(block, options = {}) {
-  if (block.kind === 'blank') return '';
-  const text = blockText(block, options);
-  const marker = block.kind === 'h' && options.headingMarker !== false ? `${'#'.repeat(block.level)} ` : '';
-  return marker + text;
+/** Computes the 1-based display number for each `ol` block (per indent level). */
+export function orderedListNumbers(blocks) {
+  const nums = new Array(blocks.length).fill(0);
+  const counters = [0, 0, 0];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.kind === 'ol') {
+      const indent = b.indent ?? 0;
+      counters[indent] += 1;
+      for (let j = indent + 1; j < counters.length; j++) counters[j] = 0;
+      nums[i] = counters[indent];
+    } else if (b.kind === 'ul') {
+      const indent = b.indent ?? 0;
+      for (let j = indent; j < counters.length; j++) counters[j] = 0;
+    } else {
+      counters.fill(0);
+    }
+  }
+  return nums;
 }
 
-/** One line per block, with nothing trimmed. */
-export function blocksToMarkdown(blocks) {
-  return blocks.map((block) => blockToLine(block)).join('\n');
+function blockToLine(block, options = {}, olNum = 1) {
+  if (block.kind === 'blank') return '';
+  if (block.kind === 'codeblock') {
+    const body = block.runs.map((r) => r.text).join('');
+    const fence = '```' + (block.lang ?? '');
+    return body ? `${fence}\n${body}\n\`\`\`` : `${fence}\n\`\`\``;
+  }
+  const md = options.markdown !== false;
+  const text = blockText(block, { withoutGhost: options.withoutGhost, markdown: md });
+  if (block.kind === 'h') {
+    const marker = options.headingMarker !== false ? `${'#'.repeat(block.level)} ` : '';
+    return marker + text;
+  }
+  if (block.kind === 'ul') return `${'  '.repeat(block.indent ?? 0)}- ${text}`;
+  if (block.kind === 'ol') return `${'  '.repeat(block.indent ?? 0)}${olNum}. ${text}`;
+  if (block.kind === 'blockquote') return text ? `> ${text}` : '>';
+  return text;
 }
+
+/** One entry per block, with nothing trimmed. */
+export function blocksToMarkdown(blocks) {
+  const nums = orderedListNumbers(blocks);
+  return blocks.map((block, i) => blockToLine(block, { markdown: true }, nums[i])).join('\n');
+}
+
+// --- inline Markdown parser -------------------------------------------------------------
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+function mergeSimpleRuns(runs) {
+  const merged = [];
+  for (const r of runs) {
+    if (!r.text) continue;
+    const last = merged[merged.length - 1];
+    if (last && sameMarks(last, r)) last.text += r.text;
+    else merged.push(r);
+  }
+  return merged;
+}
+
+/**
+ * Parses standard inline Markdown (`**bold**`, `*italic*`, `_italic_`, `~~strike~~`,
+ * `` `code` ``, `[label](url)`) into flat runs, leaving unsupported syntax (`[[wikilinks]]`,
+ * `snake_case`, unmatched delimiters) verbatim.
+ */
+export function parseInlineMarkdown(text, inherited = {}) {
+  const runs = [];
+  let plain = '';
+  const flush = () => {
+    if (plain) {
+      runs.push(makeRun(plain, inherited));
+      plain = '';
+    }
+  };
+
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i];
+
+    // Inline code: `...` or ``...``
+    if (ch === '`') {
+      let ticks = 1;
+      while (i + ticks < n && text[i + ticks] === '`') ticks += 1;
+      const delim = '`'.repeat(ticks);
+      const close = text.indexOf(delim, i + ticks);
+      if (close > i + ticks) {
+        let content = text.slice(i + ticks, close);
+        if (ticks >= 2 && content.startsWith(' ') && content.endsWith(' ') && content.trim().length > 0) {
+          content = content.slice(1, -1);
+        }
+        flush();
+        runs.push(makeRun(content, { ...inherited, code: true }));
+        i = close + ticks;
+        continue;
+      }
+      plain += delim;
+      i += ticks;
+      continue;
+    }
+
+    // Link: [label](url) — skip [[wikilinks]]
+    if (ch === '[' && text[i + 1] !== '[') {
+      const closeBracket = text.indexOf(']', i + 1);
+      if (closeBracket > i + 1 && text[closeBracket + 1] === '(') {
+        // Find matching closing ')' allowing balanced parens in URLs
+        let depth = 1;
+        let j = closeBracket + 2;
+        while (j < n && depth > 0) {
+          if (text[j] === '(') depth += 1;
+          else if (text[j] === ')') depth -= 1;
+          j += 1;
+        }
+        if (depth === 0) {
+          const rawUrl = text.slice(closeBracket + 2, j - 1).trim();
+          const url = safeHref(rawUrl);
+          if (url && !/\s/.test(url)) {
+            const label = text.slice(i + 1, closeBracket);
+            flush();
+            runs.push(...parseInlineMarkdown(label, { ...inherited, link: url }));
+            i = j;
+            continue;
+          }
+        }
+      }
+    }
+
+    // Bold+Italic: ***...***
+    if (text.startsWith('***', i) && !inherited.bold && !inherited.italic && text[i + 3] && !/\s/.test(text[i + 3])) {
+      const close = text.indexOf('***', i + 3);
+      if (close > i + 3 && !/\s/.test(text[close - 1])) {
+        flush();
+        runs.push(...parseInlineMarkdown(text.slice(i + 3, close), { ...inherited, bold: true, italic: true }));
+        i = close + 3;
+        continue;
+      }
+    }
+
+    // Bold: **...**
+    if (text.startsWith('**', i) && !inherited.bold && text[i + 2] && !/\s/.test(text[i + 2])) {
+      const close = text.indexOf('**', i + 2);
+      if (close > i + 2 && !/\s/.test(text[close - 1])) {
+        flush();
+        runs.push(...parseInlineMarkdown(text.slice(i + 2, close), { ...inherited, bold: true }));
+        i = close + 2;
+        continue;
+      }
+    }
+
+    // Strikethrough: ~~...~~
+    if (text.startsWith('~~', i) && !inherited.strike && text[i + 2] && !/\s/.test(text[i + 2])) {
+      const close = text.indexOf('~~', i + 2);
+      if (close > i + 2 && !/\s/.test(text[close - 1])) {
+        flush();
+        runs.push(...parseInlineMarkdown(text.slice(i + 2, close), { ...inherited, strike: true }));
+        i = close + 2;
+        continue;
+      }
+    }
+
+    // Italic: *...*
+    if (ch === '*' && text[i + 1] !== '*' && !inherited.italic && text[i + 1] && !/\s/.test(text[i + 1])) {
+      let close = -1;
+      for (let j = i + 1; j < n; j++) {
+        if (text[j] === '*') {
+          if (text[j + 1] === '*') {
+            j += 1; // skip ** inside
+            continue;
+          }
+          if (!/\s/.test(text[j - 1])) {
+            close = j;
+            break;
+          }
+        }
+      }
+      if (close > i + 1) {
+        flush();
+        runs.push(...parseInlineMarkdown(text.slice(i + 1, close), { ...inherited, italic: true }));
+        i = close + 1;
+        continue;
+      }
+    }
+
+    // Italic: _..._ (word boundaries only, so snake_case stays verbatim)
+    if (ch === '_' && text[i + 1] !== '_' && !inherited.italic && !(i > 0 && WORD_CHAR.test(text[i - 1])) && text[i + 1] && !/\s/.test(text[i + 1])) {
+      let close = -1;
+      for (let j = i + 1; j < n; j++) {
+        if (text[j] === '_' && !/\s/.test(text[j - 1]) && !(j + 1 < n && WORD_CHAR.test(text[j + 1]))) {
+          close = j;
+          break;
+        }
+      }
+      if (close > i + 1) {
+        flush();
+        runs.push(...parseInlineMarkdown(text.slice(i + 1, close), { ...inherited, italic: true }));
+        i = close + 1;
+        continue;
+      }
+    }
+
+    plain += ch;
+    i += 1;
+  }
+  flush();
+  return mergeSimpleRuns(runs);
+}
+
+const HR_LINE = /^(?:---+|___+|\*\*\*+)\s*$/;
+const TABLE_LINE = /^\|.*\|$/;
 
 export function markdownToBlocks(markdown) {
-  return markdown.split('\n').map((line) => {
-    if (line === '') return { kind: 'blank', runs: [] };
+  const lines = markdown.split('\n');
+  const blocks = [];
+  let i = 0;
+
+  // Preserve YAML frontmatter verbatim as plain lines.
+  if (lines[0] === '---') {
+    let close = -1;
+    for (let j = 1; j < lines.length; j++) {
+      if (lines[j] === '---' || lines[j] === '...') {
+        close = j;
+        break;
+      }
+    }
+    if (close > 0) {
+      for (let j = 0; j <= close; j++) {
+        blocks.push(lines[j] === '' ? { kind: 'blank', runs: [] } : { kind: 'p', runs: [{ text: lines[j] }] });
+      }
+      i = close + 1;
+    }
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block
+    const fence = /^```([^\s`]*)\s*$/.exec(line);
+    if (fence) {
+      let close = -1;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (/^```\s*$/.test(lines[j])) {
+          close = j;
+          break;
+        }
+      }
+      if (close >= 0) {
+        const content = lines.slice(i + 1, close).join('\n');
+        const block = { kind: 'codeblock', runs: content ? [{ text: content }] : [] };
+        if (fence[1]) block.lang = fence[1];
+        blocks.push(block);
+        i = close + 1;
+        continue;
+      }
+    }
+
+    if (line === '') {
+      blocks.push({ kind: 'blank', runs: [] });
+      i += 1;
+      continue;
+    }
+
+    if (HR_LINE.test(line) || TABLE_LINE.test(line)) {
+      blocks.push({ kind: 'p', runs: [{ text: line }] });
+      i += 1;
+      continue;
+    }
+
     const heading = /^(#{1,6}) (.*)$/.exec(line);
-    if (heading) return { kind: 'h', level: heading[1].length, runs: heading[2] ? [{ text: heading[2] }] : [] };
-    return { kind: 'p', runs: [{ text: line }] };
-  });
+    if (heading) {
+      blocks.push({ kind: 'h', level: heading[1].length, runs: heading[2] ? parseInlineMarkdown(heading[2]) : [] });
+      i += 1;
+      continue;
+    }
+
+    const quote = /^> ?(.*)$/.exec(line);
+    if (quote) {
+      blocks.push({ kind: 'blockquote', runs: quote[1] ? parseInlineMarkdown(quote[1]) : [] });
+      i += 1;
+      continue;
+    }
+
+    const bullet = /^( {0,6})[-*] (.*)$/.exec(line);
+    if (bullet) {
+      blocks.push({ kind: 'ul', indent: Math.min(2, Math.floor(bullet[1].length / 2)), runs: bullet[2] ? parseInlineMarkdown(bullet[2]) : [] });
+      i += 1;
+      continue;
+    }
+
+    const ordered = /^( {0,6})\d+\. (.*)$/.exec(line);
+    if (ordered) {
+      blocks.push({ kind: 'ol', indent: Math.min(2, Math.floor(ordered[1].length / 2)), runs: ordered[2] ? parseInlineMarkdown(ordered[2]) : [] });
+      i += 1;
+      continue;
+    }
+
+    blocks.push({ kind: 'p', runs: parseInlineMarkdown(line) });
+    i += 1;
+  }
+
+  return blocks;
 }
 
 function trimBlankEnd(text) {
@@ -390,7 +858,7 @@ function splitMeta(text) {
   if (end < 0 || text.slice(end + 3).trim() !== '') {
     // No end, or more text after it: if it does not even look like ours, leave it as text.
     const looksLikeOurs = /^<!-- write_on \{\s*"version"/.test(text.slice(start));
-    return looksLikeOurs ? { rest, meta: null, damaged: true } : { rest: text, meta: null, damaged: false };
+    return looksLikeOurs ? { rest, meta: null, damaged: true } : { rest, meta: null, damaged: false };
   }
   try {
     const meta = JSON.parse(text.slice(start + META_OPEN.length, end));
@@ -446,7 +914,7 @@ function reattach(blocks, vid, group, preferred) {
   const order = [preferred, ...blocks.map((_, i) => i)].filter((i, n, all) => i >= 0 && i < blocks.length && all.indexOf(i) === n);
   for (const index of order) {
     const block = blocks[index];
-    if (block.kind === 'blank') continue;
+    if (block.kind === 'blank' || block.kind === 'codeblock') continue;
     if (group.scope === 'paragraph') {
       if (!block.vid && block.runs.length === 1 && !block.runs[0].vid && block.runs[0].text === active) {
         block.vid = vid;
@@ -460,7 +928,8 @@ function reattach(blocks, vid, group, preferred) {
       if (run.vid) continue;
       const at = findWhole(run.text, active);
       if (at < 0) continue;
-      const pieces = [makeRun(run.text.slice(0, at)), makeRun(active, vid), makeRun(run.text.slice(at + active.length))];
+      const base = { bold: run.bold, italic: run.italic, strike: run.strike, code: run.code, link: run.link };
+      const pieces = [makeRun(run.text.slice(0, at), base), makeRun(active, { ...base, vid }), makeRun(run.text.slice(at + active.length), base)];
       block.runs.splice(r, 1, ...pieces.filter((p) => p.text));
       return true;
     }
@@ -474,7 +943,7 @@ function reattach(blocks, vid, group, preferred) {
  * @returns {{state: {html: string, groups: object, overflow: string}, note: string | null}}
  */
 export function parse(fileText) {
-  let text = fileText.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  let text = fileText.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
   const { rest, meta, damaged } = splitMeta(text);
   const { body, overflow } = splitOverflow(rest);
   const framed = meta !== null || damaged || overflow !== null;
@@ -525,18 +994,20 @@ export function parse(fileText) {
 // --- plain text --------------------------------------------------------------------------
 
 /**
- * The document as text, without blank lines at either end.
+ * The document as Markdown text, without blank lines at either end.
  * @param {{withoutGhost?: boolean, headingMarker?: boolean}} options
  */
 export function plainText(state, { withoutGhost = false, headingMarker = true } = {}) {
+  const trimmed = trimBlankBlocks(htmlToBlocks(state.html));
+  const nums = orderedListNumbers(trimmed);
   const lines = [];
-  for (const block of trimBlankBlocks(htmlToBlocks(state.html))) {
+  trimmed.forEach((block, i) => {
     // Nothing left of it (all of it ghosted, or a heading never written): it goes, mark and all.
-    if (block.kind !== 'blank' && blockText(block, { withoutGhost }) === '') continue;
-    const line = blockToLine(block, { withoutGhost, headingMarker });
-    if (line === '' && lines[lines.length - 1] === '') continue;
+    if (block.kind !== 'blank' && block.kind !== 'codeblock' && blockText(block, { withoutGhost }) === '') return;
+    const line = blockToLine(block, { withoutGhost, headingMarker, markdown: true }, nums[i]);
+    if (line === '' && lines[lines.length - 1] === '') return;
     lines.push(line);
-  }
+  });
   return trimBlankLines(lines.join('\n'));
 }
 

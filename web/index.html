@@ -34,14 +34,14 @@
     <aside id="overflow" aria-label="Overflow">
       <h2 class="title">Overflow</h2>
       <textarea class="text" aria-label="Overflow text" autocomplete="off" autocapitalize="off"></textarea>
-      <p class="hint">ctrl+<span class="return">↵</span> or drag into the page to use</p>
+      <p class="hint">⌘<span class="return">↵</span> or drag into the page to use</p>
     </aside>
 
     <!-- The chrome. Icons are drawn to the measurements in the design spec, section 4.3;
          each viewBox has its origin at the middle of the drawing. WebKit paints an inline
          SVG from a whole pixel, so every control sits on whole pixels and any half pixel
          in a drawing's position is written into its viewBox instead. -->
-    <button id="wordcount" class="control" type="button" title="Read (Ctrl+Shift+R)"></button>
+    <button id="wordcount" class="control" type="button" title="Read (⌘⇧R)"></button>
 
     <button id="toggle-alternates" class="control chrome icon wide" type="button" aria-label="Show alternatives" aria-pressed="true">
       <svg viewBox="-13 -9 26 18" aria-hidden="true">
@@ -51,7 +51,7 @@
         <path d="M-11.37 7.58H11.37" stroke-width="1.66" />
       </svg>
     </button>
-    <button id="open-source" class="control chrome icon wide" type="button" aria-label="View source" data-tip="Ctrl+U">
+    <button id="open-source" class="control chrome icon wide" type="button" aria-label="View source" data-tip="⌘U">
       <svg viewBox="-13 -9 26 18" aria-hidden="true">
         <rect x="-11.37" y="-7.59" width="22.74" height="15.18" rx="2.65" />
         <path d="M-7.03 3.54V-3.64L-3.79 -.4L-.54 -3.64V3.54" />
@@ -76,28 +76,16 @@
       </svg>
     </button>
 
-    <button id="save" class="control chrome icon" type="button" aria-label="Save" data-tip="Ctrl+S">
+    <button id="save" class="control chrome icon" type="button" aria-label="Save" data-tip="⌘S">
       <svg viewBox="-10 -10 20 20" aria-hidden="true">
         <path d="M-7.58 -7.62H3.53L7.58 -3.57V7.62H-7.58Z" />
         <path d="M-3.46 -7.62V-2.78H2.73V-7.62" />
         <path d="M-4.89 7.62V2.06H4.88V7.62" />
       </svg>
     </button>
-    <button id="open" class="control chrome icon" type="button" aria-label="Open" data-tip="Ctrl+O">
+    <button id="open" class="control chrome icon" type="button" aria-label="Open" data-tip="⌘O">
       <svg viewBox="-10.5 -10 20 20" aria-hidden="true">
         <path d="M-7.59 -7.62H-1.96L.79 -4.87H7.57V7.62H-7.59Z" />
-      </svg>
-    </button>
-    <button id="post-x" class="control chrome icon" type="button" aria-label="Post to X" data-tip="Ctrl+Shift+P">
-      <svg viewBox=".57 .53 22.94 22.94" aria-hidden="true">
-        <path class="solid" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-      </svg>
-    </button>
-    <button id="linkedin" class="control chrome icon" type="button" tabindex="-1" aria-hidden="true">
-      <svg viewBox="-10 -10 20 20" aria-hidden="true">
-        <rect x="-7.59" y="-7.59" width="15.18" height="15.18" rx="2.65" />
-        <circle class="solid" cx="-3.57" cy="-3.72" r=".8" />
-        <path d="M-3.58 -1.07V3.65M-.24 -1.07V3.65M-.24 1.06A2.13 2.13 0 0 1 4.02 1.06V3.65" />
       </svg>
     </button>
 
@@ -107,7 +95,7 @@
       </svg>
       <span>LAB</span>
     </button>
-    <button id="toggle-overflow" class="control chrome icon wide" type="button" aria-label="Overflow" aria-pressed="false" data-tip="Ctrl+Shift+D">
+    <button id="toggle-overflow" class="control chrome icon wide" type="button" aria-label="Overflow" aria-pressed="false" data-tip="⌘⇧D">
       <svg viewBox="-13 -9 26 18" aria-hidden="true">
         <rect x="-11.37" y="-7.59" width="22.74" height="15.18" rx="2.65" />
         <text class="solid" x="0" y="3.46" text-anchor="middle">XYZ</text>
@@ -115,6 +103,24 @@
     </button>
 
     <canvas id="fx" aria-hidden="true"></canvas>
+    <div id="formatbar" role="toolbar" aria-label="Text formatting">
+      <button type="button" data-cmd="bold" title="Bold (⌘B)"><strong>B</strong></button>
+      <button type="button" data-cmd="italic" title="Italic (⌘I)"><em>I</em></button>
+      <button type="button" data-cmd="strikethrough" title="Strikethrough (⌘⇧X)"><s>S</s></button>
+      <button type="button" data-cmd="code" title="Inline code (⌘⇧C)">&lt;/&gt;</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button type="button" data-cmd="link" title="Link (⌘K)">Link</button>
+      <button type="button" data-cmd="blockquote" title="Block quote (⌘⇧9)">“”</button>
+      <button type="button" data-cmd="codeblock" title="Code block (⌘⌥⇧C)">{}</button>
+    </div>
+    <div id="linkpop" role="dialog" aria-label="Edit link">
+      <form>
+        <input type="url" placeholder="https://…" autocomplete="off" spellcheck="false" />
+        <button type="submit" class="link-apply">Apply</button>
+        <button type="button" class="link-open" hidden>Open</button>
+        <button type="button" class="link-unlink" hidden>Unlink</button>
+      </form>
+    </div>
     <div id="tooltip" role="tooltip"></div>
     <div id="menu" role="menu"></div>
     <div id="labcard" role="status">

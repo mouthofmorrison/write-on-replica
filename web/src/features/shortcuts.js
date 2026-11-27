@@ -1,56 +1,64 @@
-// Keyboard shortcuts (design spec 6.13). As in the original they use Control, on the Mac
-// too; the menu bar adds the usual Command equivalents and runs the same commands.
-//
-// Every shortcut is taken here before the text sees the key, whether or not its command
-// can run, because WebKit binds some of these keys to editing: Ctrl+O opens a line,
-// Ctrl+D deletes forward.
+// Keyboard shortcuts. All app shortcuts use Command (⌘) on macOS; the native menu bar
+// registers the same equivalents and dispatches through `perform()`.
 
 /** `feature`: using it turns the tools on, out of read mode. */
 export const SHORTCUTS = [
-  { keys: 'Ctrl+Shift+R', command: 'read', label: 'Read mode: just the text' },
-  { keys: 'Ctrl+Shift+A', command: 'alternatives', label: 'Alternatives for the selection or word', feature: true },
-  { keys: 'Ctrl+Shift+G', command: 'ai-alternatives', label: 'AI alternatives for the selection or word', feature: true },
-  { keys: 'Ctrl+/', command: 'ghost', label: 'Ghost it, or revive it', feature: true },
-  { keys: 'Ctrl+Shift+X', command: 'stash', label: 'Stash in Overflow', feature: true },
-  { keys: 'Ctrl+Shift+D', command: 'overflow', label: 'Overflow panel', feature: true },
-  { keys: 'Ctrl+U', command: 'source', label: 'The piece as Markdown, and its file', feature: true },
-  { keys: 'Ctrl+S', command: 'save', label: 'Save' },
-  { keys: 'Ctrl+O', command: 'open', label: 'Open' },
-  { keys: 'Ctrl+Shift+P', command: 'post', label: 'Post to X' },
+  { keys: '⌘B', command: 'bold', label: 'Bold', mod: 'Cmd+B' },
+  { keys: '⌘I', command: 'italic', label: 'Italic', mod: 'Cmd+I' },
+  { keys: '⌘⇧X', command: 'strikethrough', label: 'Strikethrough', mod: 'Cmd+Shift+X' },
+  { keys: '⌘⇧C', command: 'code', label: 'Inline code', mod: 'Cmd+Shift+C' },
+  { keys: '⌘⌥⇧C', command: 'codeblock', label: 'Code block', mod: 'Cmd+Alt+Shift+C' },
+  { keys: '⌘⇧9', command: 'blockquote', label: 'Block quote', mod: 'Cmd+Shift+9' },
+  { keys: '⌘K', command: 'link', label: 'Link', mod: 'Cmd+K' },
+  { keys: '⌘⇧R', command: 'read', label: 'Read mode: just the text', mod: 'Cmd+Shift+R' },
+  { keys: '⌘⇧A', command: 'alternatives', label: 'Alternatives for the selection or word', feature: true, mod: 'Cmd+Shift+A' },
+  { keys: '⌘⇧G', command: 'ai-alternatives', label: 'AI alternatives for the selection or word', feature: true, mod: 'Cmd+Shift+G' },
+  { keys: '⌘/', command: 'ghost', label: 'Ghost it, or revive it', feature: true, mod: 'Cmd+/' },
+  { keys: '⌘⇧E', command: 'stash', label: 'Stash in Overflow', feature: true, mod: 'Cmd+Shift+E' },
+  { keys: '⌘⇧D', command: 'overflow', label: 'Overflow panel', feature: true, mod: 'Cmd+Shift+D' },
+  { keys: '⌘U', command: 'source', label: 'The piece as Markdown, and its file', feature: true, mod: 'Cmd+U' },
+  { keys: '⌘S', command: 'save', label: 'Save', mod: 'Cmd+S' },
+  { keys: '⌘O', command: 'open', label: 'Open', mod: 'Cmd+O' },
 ];
 
 const FEATURES = new Set(SHORTCUTS.filter((shortcut) => shortcut.feature).map((shortcut) => shortcut.command));
 
-const CODES = { '/': 'Slash' };
+const CODES = { '/': 'Slash', '9': 'Digit9' };
 
-function parse(keys) {
-  const parts = keys.split('+');
+function parse(mod) {
+  const parts = mod.split('+');
   const key = parts[parts.length - 1].toLowerCase();
-  return { shift: parts.includes('Shift'), key, code: CODES[key] ?? `Key${key.toUpperCase()}` };
+  return {
+    shift: parts.includes('Shift'),
+    alt: parts.includes('Alt'),
+    key,
+    code: CODES[key] ?? (/^\d$/.test(key) ? `Digit${key}` : `Key${key.toUpperCase()}`),
+  };
 }
 
 export function initShortcuts({ ui, commands }) {
-  const table = SHORTCUTS.map((shortcut) => ({ ...shortcut, ...parse(shortcut.keys) }));
-  // With Control held a key can arrive as a control character; then the physical key decides.
+  const table = SHORTCUTS.map((shortcut) => ({ ...shortcut, ...parse(shortcut.mod) }));
   const pressed = (event, wanted) => event.key.toLowerCase() === wanted.key || event.code === wanted.code;
 
   window.addEventListener(
     'keydown',
     (event) => {
-      if (event.altKey) return;
+      if (event.ctrlKey) return;
 
-      // Undo and redo are the document's, with Command or Control, wherever the focus is,
-      // except in a field that keeps a history of its own. (The Overflow text is not one:
-      // it is part of the document.)
-      if (event.metaKey !== event.ctrlKey && pressed(event, { key: 'z', code: 'KeyZ' })) {
+      // Undo and redo are the document's, with Command, wherever the focus is,
+      // except in a field that keeps a history of its own. (Overflow shares document history.)
+      if (event.metaKey && !event.altKey && pressed(event, { key: 'z', code: 'KeyZ' })) {
         if (event.target.closest?.('textarea, input') && !event.target.closest('#overflow')) return;
         event.preventDefault();
         commands.run(event.shiftKey ? 'redo' : 'undo');
         return;
       }
 
-      if (!event.ctrlKey || event.metaKey) return;
-      const shortcut = table.find((entry) => entry.shift === event.shiftKey && pressed(event, entry));
+      if (!event.metaKey) return;
+      // Do not hijack typing shortcuts inside inputs like the link popover.
+      if (event.target.closest?.('#linkpop')) return;
+
+      const shortcut = table.find((entry) => entry.shift === event.shiftKey && entry.alt === event.altKey && pressed(event, entry));
       if (!shortcut) return;
       event.preventDefault();
       event.stopPropagation();
@@ -61,7 +69,6 @@ export function initShortcuts({ ui, commands }) {
 
   /** Runs a command as its shortcut would. The menu bar comes this way too. */
   function perform(command) {
-    // The command first: it may need to know that the tools were off when it was asked for.
     commands.run(command);
     if (FEATURES.has(command)) ui.set({ read: false });
   }

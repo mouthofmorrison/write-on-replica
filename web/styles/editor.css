@@ -134,6 +134,110 @@ body:not(.is-alternates) #decor {
   font-weight: 700;
 }
 
+/* Inline formatting marks */
+#editor strong {
+  font-weight: 700;
+}
+#editor em {
+  font-style: italic;
+}
+#editor s {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: rgba(var(--text-rgb), 0.65);
+}
+#editor code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: rgba(var(--accent-rgb), 0.14);
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+#editor a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--accent-rgb), 0.55);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* Lists: bulleted and numbered, up to 3 indent levels */
+#editor p[data-ul],
+#editor p[data-ol] {
+  position: relative;
+  padding-left: 28px;
+}
+#editor p[data-ul="1"],
+#editor p[data-ol="1"] {
+  padding-left: 56px;
+}
+#editor p[data-ul="2"],
+#editor p[data-ol="2"] {
+  padding-left: 84px;
+}
+#editor p[data-ul]::before {
+  content: "•";
+  position: absolute;
+  left: 8px;
+  top: 0;
+  line-height: var(--line);
+  font-size: 0.95em;
+  color: var(--dim-text);
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#editor p[data-ul="1"]::before {
+  content: "◦";
+  left: 36px;
+  font-size: 0.72em;
+}
+#editor p[data-ul="2"]::before {
+  content: "▪";
+  left: 65px;
+  font-size: 0.56em;
+}
+#editor p[data-ol]::before {
+  content: attr(data-num) ".";
+  position: absolute;
+  left: -6px;
+  width: 30px;
+  text-align: right;
+  color: var(--dim-text);
+  font-size: 0.85em;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#editor p[data-ol="1"]::before {
+  left: 22px;
+}
+#editor p[data-ol="2"]::before {
+  left: 50px;
+}
+
+/* Block quotes */
+#editor p[data-quote] {
+  border-left: 3px solid rgba(var(--accent-rgb), 0.55);
+  padding-left: 18px;
+  color: rgba(var(--text-rgb), 0.82);
+}
+
+/* Fenced code blocks */
+#editor p[data-code] {
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 26px;
+  background: rgba(18, 21, 34, 0.85);
+  border: 1px solid var(--popover-edge);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  tab-size: 2;
+}
+
 /* Ghosted text: still there, still readable, easy to ignore. A selection over it is dimmed
    along with it. */
 #editor [data-ghost] {

@@ -21,7 +21,7 @@ import { applyCuts } from './trim.js';
 export function offered(blocks, { headings = false } = {}) {
   const paragraphs = [];
   blocks.forEach((block, index) => {
-    if (block.kind !== 'p' && !(headings && block.kind === 'h')) return;
+    if (block.kind === 'blank' || block.kind === 'codeblock' || (block.kind === 'h' && !headings)) return;
     let text = '';
     let map = [];
     let at = 0;
